@@ -2,7 +2,8 @@
 Utilities for loading, rescaling, image processing.
 """
 import torch
-
+import string
+import random
 
 def unflatten_images(input_batch, depth, height, width):
     """
@@ -48,3 +49,8 @@ def l1_norm(mdl, include_bias=True, device=(torch.device('cuda:0') if torch.cuda
             if len(w.shape) > 1:
                 _norm = _norm + w.norm(p=1)
         return _norm
+
+
+def get_random_string(length=4):
+    chars = string.ascii_letters + string.digits
+    return ''.join(random.choice(chars) for i in range(length))

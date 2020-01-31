@@ -31,12 +31,17 @@ import torch.utils.data as data
 import numpy as np
 # models/losses/image utils:
 from nice.models import NICEModel
-from nice.loss import LogisticPriorNICELoss, GaussianPriorNICELoss
+from nice.loss import LogisticPriorNICELoss, GaussianPriorNICELoss, BinomialPriorNICELoss
 from nice.utils import rescale, l1_norm
 # python/os utils:
 import argparse
 import os
 from tqdm import tqdm, trange
+from sklearn.utils import shuffle
+import matplotlib.pyplot as plt
+import shutil
+from datetime import date
+from nice.utils import get_random_string
 
 # set CUDA training on if detected:
 if torch.cuda.is_available():
@@ -52,6 +57,40 @@ else:
 # 2) adds the corresponding whitening & rescaling transforms;
 # 3) returns a dataloader for that dataset.
 
+
+def load_toy_task(train=True, batch_size=1, num_workers=0):
+    X_ok = np.random.multivariate_normal(mean=[0.0, 0.0], cov=np.eye(2), size=9500)
+    X_outlier = np.random.multivariate_normal(mean=[4.0, 4.0], cov=0.3 * np.eye(2), size=500)
+    X = np.concatenate((X_ok, X_outlier))
+    y_ok = np.array([0]*9500)
+    y_outlier = np.array([-1]*500)
+    y = np.concatenate((y_ok, y_outlier))
+    X, y = shuffle(X, y)
+
+    tensor_X = torch.Tensor(X)
+    tensor_y = torch.Tensor(y)
+    train_dataset = data.TensorDataset(tensor_X, tensor_y)
+    train_dataloader = data.DataLoader(train_dataset, batch_size=batch_size, pin_memory=CUDA, drop_last=train)
+
+    X_ok_test = np.random.multivariate_normal(mean=[0.0, 0.0], cov=np.eye(2), size=950)
+    X_outlier_test = np.random.multivariate_normal(mean=[4.0, 4.0], cov=0.3 * np.eye(2), size=50)
+    X_test = np.concatenate((X_ok_test, X_outlier_test))
+    y_ok_test = np.array([0]*950)
+    y_outlier_test = np.array([-1]*50)
+    y_test = np.concatenate((y_ok_test, y_outlier_test))
+
+    tensor_X_test = torch.Tensor(X_test)
+    tensor_y_test = torch.Tensor(y_test)
+    test_dataset = data.TensorDataset(tensor_X_test, tensor_y_test)
+    test_dataloader = data.DataLoader(test_dataset, batch_size=batch_size, pin_memory=CUDA, drop_last=train)
+
+    if train:
+        return train_dataloader
+    else:
+        return test_dataloader
+
+
+
 def load_mnist(train=True, batch_size=1, num_workers=0):
     """Rescale and preprocess MNIST dataset."""
     mnist_transform = torchvision.transforms.Compose([
@@ -64,6 +103,7 @@ def load_mnist(train=True, batch_size=1, num_workers=0):
         # rescale to [0,1]:
         torchvision.transforms.Lambda(lambda x: rescale(x, 0., 1.))
     ])
+    print(torchvision.datasets.MNIST(root="./datasets/mnist", train=train, transform=mnist_transform, download=False))
     return data.DataLoader(
         torchvision.datasets.MNIST(root="./datasets/mnist", train=train, transform=mnist_transform, download=False),
         batch_size=batch_size,
@@ -133,6 +173,10 @@ def load_tfd(train=True, batch_size=1, num_workers=0):
 def train(args):
     """Construct a NICE model and train over a number of epochs."""
     # === choose which dataset to build:
+    if args.dataset == 'toy':
+        load_toy_task()
+        dataloader_fn = load_toy_task
+        input_dim = 2
     if args.dataset == 'mnist':
         dataloader_fn = load_mnist
         input_dim = 28*28
@@ -158,26 +202,35 @@ def train(args):
     # === choose which loss function to build:
     if args.prior == 'logistic':
         nice_loss_fn = LogisticPriorNICELoss(size_average=True)
+    elif args.prior == 'binomial':
+        nice_loss_fn = BinomialPriorNICELoss(size_average=True)
     else:
         nice_loss_fn = GaussianPriorNICELoss(size_average=True)
-    def loss_fn(fx):
+
+    def loss_fn(fx, DEVICE):
         """Compute NICE loss w/r/t a prior and optional L1 regularization."""
         if args.lmbda == 0.0:
-            return nice_loss_fn(fx, model.scaling_diag)
+            return nice_loss_fn(fx, model.scaling_diag, DEVICE)
         else:
-            return nice_loss_fn(fx, model.scaling_diag) + args.lmbda*l1_norm(model, include_bias=True)
+            return nice_loss_fn(fx, model.scaling_diag, DEVICE) + args.lmbda*l1_norm(model, include_bias=True)
 
     # === train over a number of epochs; perform validation after each:
+    path = 'runs/'+date.today().strftime('%m_%d_')+\
+           '_dataset={}_prior={}_batch_size={}_nlayers={}_nhidden={}_epochs={}_'.format(args.dataset, args.prior, args.batch_size, args.nlayers, args.nhidden, args.num_epochs)+get_random_string()
+    if os.path.isdir(path):
+        shutil.rmtree(path)
+    os.makedirs(path)
+
     for t in range(args.num_epochs):
         print("* Epoch {0}:".format(t))
         dataloader = dataloader_fn(train=True, batch_size=args.batch_size)
         for inputs, _ in tqdm(dataloader):
             opt.zero_grad()
-            loss_fn(model(inputs.to(DEVICE))).backward()
+            loss_fn(model(inputs.to(DEVICE)), DEVICE).backward()
             opt.step()
         
         # save model to disk and delete dataloader to save memory:
-        if t % args.save_epoch == 0:
+        if t % args.save_epoch == 0 and args.save:
             _dev = 'cuda' if CUDA else 'cpu'
             _fn = "nice.{0}.l_{1}.h_{2}.p_{3}.e_{4}.{5}.pt".format(args.dataset, args.nlayers, args.nhidden, args.prior, t, _dev)
             torch.save(model.state_dict(), os.path.join(args.savedir, _fn))
@@ -187,7 +240,37 @@ def train(args):
         # perform validation loop:
         vmin, vmed, vmean, vmax = validate(model, dataloader_fn, nice_loss_fn)
         print(">>> Validation Loss Statistics: min={0}, med={1}, mean={2}, max={3}".format(vmin,vmed,vmean,vmax))
+        #if args.dataset == 'toy' and t == args.num_epochs - 1:
+        validate_outliers(model, dataloader_fn, t+1, path)
 
+
+def validate_outliers(model, dataloader_fn, epoch, path):
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    model.eval()
+    dataloader = dataloader_fn(train=False, batch_size=args.batch_size)
+
+    validation = []
+    targets = []
+    with torch.no_grad():
+        for x, y in tqdm(dataloader):
+            validation.append(model.forward(x.to(DEVICE)).cpu().detach().numpy())
+            targets.append(y)
+        validation = np.concatenate(validation, axis=0)
+        targets = torch.cat(targets).cpu().detach().numpy()
+        x, y = np.hsplit(validation, 2)
+        colors = []
+        for i in targets:
+            if i == 0:
+                colors.append('black')
+            else:
+                colors.append('red')
+        ax.scatter(x, y, c=colors)
+        fig.savefig('./{}/epoch_{}.png'.format(path, epoch))
+
+    del dataloader
+
+    return
 # ===== ===== ===== ===== ===== ===== ===== ===== ===== =====
 # Validation loop: set gradient-tracking off with model in eval mode:
 def validate(model, dataloader_fn, loss_fn):
@@ -202,7 +285,7 @@ def validate(model, dataloader_fn, loss_fn):
     validation_losses = []
     with torch.no_grad():
         for inputs,_ in tqdm(dataloader):
-            validation_losses.append(loss_fn(model(inputs.to(DEVICE)), model.scaling_diag).item())
+            validation_losses.append(loss_fn(model(inputs.to(DEVICE)), model.scaling_diag, DEVICE).item())
     
     # delete dataloader to save memory:
     del dataloader
@@ -221,7 +304,7 @@ if __name__ == '__main__':
     # ----- parse training settings:
     parser = argparse.ArgumentParser(description="Train a fresh NICE model and save.")
     # configuration settings:
-    parser.add_argument("--dataset", required=True, dest='dataset', choices=('tfd', 'cifar10', 'svhn', 'mnist'),
+    parser.add_argument("--dataset", required=True, dest='dataset', choices=('tfd', 'cifar10', 'svhn', 'mnist', 'toy'),
                         help="Dataset to train the NICE model on.")
     parser.add_argument("--epochs", dest='num_epochs', default=1500, type=int,
                         help="Number of epochs to train on. [1500]")
@@ -236,7 +319,7 @@ if __name__ == '__main__':
                         help="Number of layers in the nonlinearity. [5]")
     parser.add_argument("--nonlinearity_hiddens", dest='nhidden', default=1000, type=int,
                         help="Hidden size of inner layers of nonlinearity. [1000]")
-    parser.add_argument("--prior", choices=('logistic', 'prior'), default="logistic",
+    parser.add_argument("--prior", choices=('binomial', 'logistic', 'prior'), default="logistic",
                         help="Prior distribution of latent space components. [logistic]")
     parser.add_argument("--model_path", dest='model_path', default=None, type=str,
                         help="Continue from pretrained model. [None]")
@@ -251,6 +334,8 @@ if __name__ == '__main__':
                         help="Epsilon for ADAM optimizer. [0.0001]")
     parser.add_argument("--lambda", default=0.0, dest='lmbda', type=float,
                         help="L1 weight decay coefficient. [0.0]")
+    parser.add_argument("--save", default=False, type=bool,
+                        help="If save models?")
     args = parser.parse_args()
     # ----- run training loop over several epochs & save models for each epoch:
     model = train(args)
