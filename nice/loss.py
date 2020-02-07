@@ -48,10 +48,11 @@ def binomial_coeff(n, alpha):
 
 
 def binomial_nice(h, diag, DEVICE):
-    #radius = torch.sort(torch.stack([torch.sqrt(torch.sum(i)) for i in torch.pow(h, 2)]), descending=True)
-    radius = torch.sort(torch.stack([torch.pow(torch.sqrt(torch.sum(i)), h.shape[1]) for i in torch.pow(h, 2)]), descending=True)
+    radius = torch.sort(torch.stack([torch.sqrt(torch.sum(i)) for i in torch.pow(h, 2)]), descending=True)
+    #radius = torch.sort(torch.stack([torch.pow(torch.sqrt(torch.sum(i)), h.shape[1]) for i in torch.pow(h, 2)]), descending=True)
     alpha = 0.05
-    loss = torch.sum(diag) - torch.dot(radius[0], binomial_coeff(radius[0].shape[0], alpha).to(DEVICE))
+    loss = torch.sum(diag) - torch.mul(torch.tensor(2.0), torch.log(torch.dot(radius[0], binomial_coeff(radius[0].shape[0], alpha).to(DEVICE))))
+    #loss = torch.div(torch.dot(radius[0], binomial_coeff(radius[0].shape[0], alpha).to(DEVICE)), torch.exp(diag[0]*diag[1]))
     return loss
 
 
@@ -61,7 +62,8 @@ class GaussianPriorNICELoss(nn.Module):
         super(GaussianPriorNICELoss, self).__init__()
         self.size_average = size_average
 
-    def forward(self, fx, diag):
+    def forward(self, fx, diag, DEVICE):
+        print(diag)
         if self.size_average:
             return torch.mean(-gaussian_nice_loglkhd(fx, diag))
         else:
@@ -73,7 +75,8 @@ class LogisticPriorNICELoss(nn.Module):
         super(LogisticPriorNICELoss, self).__init__()
         self.size_average = size_average
 
-    def forward(self, fx, diag):
+    def forward(self, fx, diag, DEVICE):
+        print(diag)
         if self.size_average:
             return torch.mean(-logistic_nice_loglkhd(fx, diag))
         else:
@@ -86,6 +89,7 @@ class BinomialPriorNICELoss(nn.Module):
         self.size_average = size_average
 
     def forward(self, fx, diag, DEVICE):
+        print(diag)
         if self.size_average:
             return torch.mean(-binomial_nice(fx, diag, DEVICE))
         else:

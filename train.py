@@ -64,6 +64,12 @@ def load_toy_task(train=True, batch_size=1, num_workers=0):
     X = np.concatenate((X_ok, X_outlier))
     y_ok = np.array([0]*9500)
     y_outlier = np.array([-1]*500)
+    # X_ok = np.random.multivariate_normal(mean=[0.0, 0.0], cov=np.eye(2), size=9800)
+    # X_outlier = np.random.multivariate_normal(mean=[4.0, 4.0], cov=0.3 * np.eye(2), size=200)
+    # X = np.concatenate((X_ok, X_outlier))
+    # y_ok = np.array([0] * 9800)
+    # y_outlier = np.array([-1] * 200)
+
     y = np.concatenate((y_ok, y_outlier))
     X, y = shuffle(X, y)
 
@@ -77,6 +83,12 @@ def load_toy_task(train=True, batch_size=1, num_workers=0):
     X_test = np.concatenate((X_ok_test, X_outlier_test))
     y_ok_test = np.array([0]*950)
     y_outlier_test = np.array([-1]*50)
+    # X_ok_test = np.random.multivariate_normal(mean=[0.0, 0.0], cov=np.eye(2), size=980)
+    # X_outlier_test = np.random.multivariate_normal(mean=[4.0, 4.0], cov=0.3 * np.eye(2), size=20)
+    # X_test = np.concatenate((X_ok_test, X_outlier_test))
+    # y_ok_test = np.array([0] * 980)
+    # y_outlier_test = np.array([-1] * 20)
+
     y_test = np.concatenate((y_ok_test, y_outlier_test))
 
     tensor_X_test = torch.Tensor(X_test)
@@ -240,8 +252,8 @@ def train(args):
         # perform validation loop:
         vmin, vmed, vmean, vmax = validate(model, dataloader_fn, nice_loss_fn)
         print(">>> Validation Loss Statistics: min={0}, med={1}, mean={2}, max={3}".format(vmin,vmed,vmean,vmax))
-        #if args.dataset == 'toy' and t == args.num_epochs - 1:
-        validate_outliers(model, dataloader_fn, t+1, path)
+        if args.dataset == 'toy':
+            validate_outliers(model, dataloader_fn, t+1, path)
 
 
 def validate_outliers(model, dataloader_fn, epoch, path):
@@ -259,9 +271,12 @@ def validate_outliers(model, dataloader_fn, epoch, path):
         validation = np.concatenate(validation, axis=0)
         targets = torch.cat(targets).cpu().detach().numpy()
         x, y = np.hsplit(validation, 2)
+        norms = np.sqrt(np.power(x, 2) + np.power(y, 2))
+        norm95 = np.percentile(norms, 95)
+        norm98 = np.percentile(norms, 98)
         colors = []
-        for i in targets:
-            if i == 0:
+        for n in norms:
+            if n <= norm95:
                 colors.append('black')
             else:
                 colors.append('red')
@@ -319,7 +334,7 @@ if __name__ == '__main__':
                         help="Number of layers in the nonlinearity. [5]")
     parser.add_argument("--nonlinearity_hiddens", dest='nhidden', default=1000, type=int,
                         help="Hidden size of inner layers of nonlinearity. [1000]")
-    parser.add_argument("--prior", choices=('binomial', 'logistic', 'prior'), default="logistic",
+    parser.add_argument("--prior", choices=('binomial', 'logistic', 'gaussian'), default="logistic",
                         help="Prior distribution of latent space components. [logistic]")
     parser.add_argument("--model_path", dest='model_path', default=None, type=str,
                         help="Continue from pretrained model. [None]")
