@@ -42,6 +42,8 @@ import matplotlib.pyplot as plt
 import shutil
 from datetime import date
 from nice.utils import get_random_string
+from sklearn.datasets import make_moons
+from torch.utils.tensorboard import SummaryWriter
 
 # set CUDA training on if detected:
 if torch.cuda.is_available():
@@ -58,43 +60,37 @@ else:
 # 3) returns a dataloader for that dataset.
 
 
-def load_toy_task(train=True, batch_size=1, num_workers=0):
-    X_ok = np.random.multivariate_normal(mean=[0.0, 0.0], cov=np.eye(2), size=9500)
-    X_outlier = np.random.multivariate_normal(mean=[4.0, 4.0], cov=0.3 * np.eye(2), size=500)
-    X = np.concatenate((X_ok, X_outlier))
-    y_ok = np.array([0]*9500)
-    y_outlier = np.array([-1]*500)
-    # X_ok = np.random.multivariate_normal(mean=[0.0, 0.0], cov=np.eye(2), size=9800)
-    # X_outlier = np.random.multivariate_normal(mean=[4.0, 4.0], cov=0.3 * np.eye(2), size=200)
-    # X = np.concatenate((X_ok, X_outlier))
-    # y_ok = np.array([0] * 9800)
-    # y_outlier = np.array([-1] * 200)
+def load_moons(train=True, batch_size=1, num_workers=0, alpha=0.05):
+    rng = np.random.RandomState(42)
+    n_inliers_train = int(10000 * (1 - alpha))
+    n_outliers_train = int(10000 * alpha)
+    n_inliers_test = int(0.1 * n_inliers_train)
+    n_outliers_test = int(0.1 * n_outliers_train)
 
-    y = np.concatenate((y_ok, y_outlier))
+    X_ok = 4. * (make_moons(n_samples=n_inliers_train, noise=.05, random_state=0)[0] - np.array([0.5, 0.25]))
+    X_out = rng.uniform(low=-6, high=6, size=(n_outliers_train, 2))
+    X = np.concatenate((X_ok, X_out))
+    y_ok = np.array([0] * n_inliers_train)
+    y_out = np.array([-1] * n_outliers_train)
+    y = np.concatenate((y_ok, y_out))
     X, y = shuffle(X, y)
 
     tensor_X = torch.Tensor(X)
     tensor_y = torch.Tensor(y)
     train_dataset = data.TensorDataset(tensor_X, tensor_y)
-    train_dataloader = data.DataLoader(train_dataset, batch_size=batch_size, pin_memory=CUDA, drop_last=train)
+    train_dataloader = data.DataLoader(train_dataset, batch_size=batch_size, pin_memory=CUDA, drop_last=False)
 
-    X_ok_test = np.random.multivariate_normal(mean=[0.0, 0.0], cov=np.eye(2), size=950)
-    X_outlier_test = np.random.multivariate_normal(mean=[4.0, 4.0], cov=0.3 * np.eye(2), size=50)
-    X_test = np.concatenate((X_ok_test, X_outlier_test))
-    y_ok_test = np.array([0]*950)
-    y_outlier_test = np.array([-1]*50)
-    # X_ok_test = np.random.multivariate_normal(mean=[0.0, 0.0], cov=np.eye(2), size=980)
-    # X_outlier_test = np.random.multivariate_normal(mean=[4.0, 4.0], cov=0.3 * np.eye(2), size=20)
-    # X_test = np.concatenate((X_ok_test, X_outlier_test))
-    # y_ok_test = np.array([0] * 980)
-    # y_outlier_test = np.array([-1] * 20)
-
-    y_test = np.concatenate((y_ok_test, y_outlier_test))
+    X_ok_test = 4. * (make_moons(n_samples=n_inliers_test, noise=.05, random_state=0)[0] - np.array([0.5, 0.25]))
+    X_out_test = rng.uniform(low=-6, high=6, size=(n_outliers_test, 2))
+    X_test = np.concatenate((X_ok_test, X_out_test))
+    y_ok_test = np.array([0] * n_inliers_test)
+    y_out_test = np.array([-1] * n_outliers_test)
+    y_test = np.concatenate((y_ok_test, y_out_test))
 
     tensor_X_test = torch.Tensor(X_test)
     tensor_y_test = torch.Tensor(y_test)
     test_dataset = data.TensorDataset(tensor_X_test, tensor_y_test)
-    test_dataloader = data.DataLoader(test_dataset, batch_size=batch_size, pin_memory=CUDA, drop_last=train)
+    test_dataloader = data.DataLoader(test_dataset, batch_size=batch_size, pin_memory=CUDA, drop_last=False)
 
     if train:
         return train_dataloader
@@ -102,8 +98,81 @@ def load_toy_task(train=True, batch_size=1, num_workers=0):
         return test_dataloader
 
 
+def load_gausses(train=True, batch_size=1, num_workers=0, alpha=0.05):
+    n_train = int(10000)
+    n_test = int(0.1*10000)
 
-def load_mnist(train=True, batch_size=1, num_workers=0):
+    X_gauss1 = np.random.multivariate_normal(mean=[-5.0, 0.0], cov=np.eye(2), size=int(n_train/2))
+    X_gauss2 = np.random.multivariate_normal(mean=[5.0, 0.0], cov=np.eye(2), size=int(n_train/2))
+    X = np.concatenate((X_gauss1, X_gauss2))
+    y_gauss1 = np.array([0] * int(n_train/2))
+    y_gauss2 = np.array([-1] * int(n_train / 2))
+    y = np.concatenate((y_gauss1, y_gauss2))
+    X, y = shuffle(X, y)
+
+    tensor_X = torch.Tensor(X)
+    tensor_y = torch.Tensor(y)
+    train_dataset = data.TensorDataset(tensor_X, tensor_y)
+    train_dataloader = data.DataLoader(train_dataset, batch_size=batch_size, pin_memory=CUDA, drop_last=False)
+
+    X_gauss1_test = np.random.multivariate_normal(mean=[-3.0, 0.0], cov=np.eye(2), size=int(n_test / 2))
+    X_gauss2_test = np.random.multivariate_normal(mean=[3.0, 0.0], cov=np.eye(2), size=int(n_test / 2))
+    X_test = np.concatenate((X_gauss1_test, X_gauss2_test))
+    y_gauss1_test = np.array([0] * int(n_test / 2))
+    y_gauss2_test = np.array([-1] * int(n_test / 2))
+    y_test = np.concatenate((y_gauss1_test, y_gauss2_test))
+    X_test, y_test = shuffle(X_test, y_test)
+
+    tensor_X_test = torch.Tensor(X_test)
+    tensor_y_test = torch.Tensor(y_test)
+    test_dataset = data.TensorDataset(tensor_X_test, tensor_y_test)
+    test_dataloader = data.DataLoader(test_dataset, batch_size=batch_size, pin_memory=CUDA, drop_last=False)
+
+    if train:
+        return train_dataloader
+    else:
+        return test_dataloader
+
+
+def load_blobs(train=True, batch_size=1, num_workers=0, alpha=0.05):
+    n_inliers_train = int(10000*(1-alpha))
+    n_outliers_train = int(10000*alpha)
+    n_inliers_test = int(0.1*n_inliers_train)
+    n_outliers_test = int(0.1*n_outliers_train)
+    X_ok = np.random.multivariate_normal(mean=[0.0, 0.0], cov=np.eye(2), size=n_inliers_train)
+    X_outlier = np.random.multivariate_normal(mean=[4.0, 4.0], cov=0.3 * np.eye(2), size=n_outliers_train)
+    X = np.concatenate((X_ok, X_outlier))
+    y_ok = np.array([0] * n_inliers_train)
+    y_outlier = np.array([-1] * n_outliers_train)
+
+    y = np.concatenate((y_ok, y_outlier))
+    X, y = shuffle(X, y)
+
+    tensor_X = torch.Tensor(X)
+    tensor_y = torch.Tensor(y)
+    train_dataset = data.TensorDataset(tensor_X, tensor_y)
+    train_dataloader = data.DataLoader(train_dataset, batch_size=batch_size, pin_memory=CUDA, drop_last=False)
+
+    X_ok_test = np.random.multivariate_normal(mean=[0.0, 0.0], cov=np.eye(2), size=n_inliers_test)
+    X_outlier_test = np.random.multivariate_normal(mean=[4.0, 4.0], cov=0.3 * np.eye(2), size=n_outliers_test)
+    X_test = np.concatenate((X_ok_test, X_outlier_test))
+    y_ok_test = np.array([0] * n_inliers_test)
+    y_outlier_test = np.array([-1] * n_outliers_test)
+
+    y_test = np.concatenate((y_ok_test, y_outlier_test))
+
+    tensor_X_test = torch.Tensor(X_test)
+    tensor_y_test = torch.Tensor(y_test)
+    test_dataset = data.TensorDataset(tensor_X_test, tensor_y_test)
+    test_dataloader = data.DataLoader(test_dataset, batch_size=batch_size, pin_memory=CUDA, drop_last=False)
+
+    if train:
+        return train_dataloader
+    else:
+        return test_dataloader
+
+
+def load_mnist(train=True, batch_size=1, num_workers=0, alpha=0.05):
     """Rescale and preprocess MNIST dataset."""
     mnist_transform = torchvision.transforms.Compose([
         # convert PIL image to tensor:
@@ -123,7 +192,7 @@ def load_mnist(train=True, batch_size=1, num_workers=0):
         drop_last=train
     )
 
-def load_svhn(train=True, batch_size=1, num_workers=0):
+def load_svhn(train=True, batch_size=1, num_workers=0, alpha=0.05):
     """Rescale and preprocess SVHN dataset."""
     # check if ZCA matrix exists on dataset yet:
     assert os.path.exists("./datasets/svhn/zca_matrix.pt"), \
@@ -150,7 +219,7 @@ def load_svhn(train=True, batch_size=1, num_workers=0):
         drop_last=train
     )
 
-def load_cifar10(train=True, batch_size=1, num_workers=0):
+def load_cifar10(train=True, batch_size=1, num_workers=0, alpha=0.05):
     """Rescale and preprocess CIFAR10 dataset."""
     # check if ZCA matrix exists on dataset yet:
     assert os.path.exists("./datasets/cifar/zca_matrix.pt"), \
@@ -176,7 +245,7 @@ def load_cifar10(train=True, batch_size=1, num_workers=0):
         drop_last=train
     )
 
-def load_tfd(train=True, batch_size=1, num_workers=0):
+def load_tfd(train=True, batch_size=1, num_workers=0, alpha=0.05):
     """Rescale and preprocess TFD dataset."""
     raise NotImplementedError("[load_tfd] Toronto Faces Dataset unsupported right now. Sorry!")
 
@@ -185,9 +254,14 @@ def load_tfd(train=True, batch_size=1, num_workers=0):
 def train(args):
     """Construct a NICE model and train over a number of epochs."""
     # === choose which dataset to build:
-    if args.dataset == 'toy':
-        load_toy_task()
-        dataloader_fn = load_toy_task
+    if args.dataset == 'blobs':
+        dataloader_fn = load_blobs
+        input_dim = 2
+    if args.dataset == 'moons':
+        dataloader_fn = load_moons
+        input_dim = 2
+    if args.dataset == 'gausses':
+        dataloader_fn = load_gausses
         input_dim = 2
     if args.dataset == 'mnist':
         dataloader_fn = load_mnist
@@ -222,24 +296,37 @@ def train(args):
     def loss_fn(fx, DEVICE):
         """Compute NICE loss w/r/t a prior and optional L1 regularization."""
         if args.lmbda == 0.0:
-            return nice_loss_fn(fx, model.scaling_diag, DEVICE)
+            return nice_loss_fn(fx, model.scaling_diag, DEVICE, args.alpha)
         else:
-            return nice_loss_fn(fx, model.scaling_diag, DEVICE) + args.lmbda*l1_norm(model, include_bias=True)
+            return nice_loss_fn(fx, model.scaling_diag, DEVICE, args.alpha) + args.lmbda*l1_norm(model, include_bias=True)
 
     # === train over a number of epochs; perform validation after each:
-    path = 'runs/'+date.today().strftime('%m_%d_')+\
-           '_dataset={}_prior={}_batch_size={}_nlayers={}_nhidden={}_epochs={}_'.format(args.dataset, args.prior, args.batch_size, args.nlayers, args.nhidden, args.num_epochs)+get_random_string()
-    if os.path.isdir(path):
-        shutil.rmtree(path)
-    os.makedirs(path)
+    path = date.today().strftime('%m_%d_')+\
+           '_dataset={}_alpha={}_prior={}_batch_size={}_nlayers={}_nhidden={}_epochs={}_'.format(args.dataset, args.alpha, args.prior, args.batch_size, args.nlayers, args.nhidden, args.num_epochs)+get_random_string()
+    path_plots = 'runs/'+str(args.dataset)+'/'+path
+    path_tensorboard = 'logs/'+str(args.dataset)+'/'+path
+    if os.path.isdir(path_plots):
+        shutil.rmtree(path_plots)
+    os.makedirs(path_plots)
+
+    writer = SummaryWriter(log_dir=path_tensorboard)
 
     for t in range(args.num_epochs):
         print("* Epoch {0}:".format(t))
-        dataloader = dataloader_fn(train=True, batch_size=args.batch_size)
+        dataloader = dataloader_fn(train=True, batch_size=args.batch_size, alpha=args.alpha)
+        losses = []
+        last_loss = 0.0
         for inputs, _ in tqdm(dataloader):
             opt.zero_grad()
-            loss_fn(model(inputs.to(DEVICE)), DEVICE).backward()
+            loss = loss_fn(model(inputs.to(DEVICE)), DEVICE)
+            a = loss
+            a = a.cpu().detach().numpy()
+            loss.backward()
             opt.step()
+            last_loss = a
+            losses.append(a)
+        writer.add_scalar('Loss/train_mean', np.mean(np.array(losses)), t+1)
+        writer.add_scalar('Loss/train', last_loss, t+1)
         
         # save model to disk and delete dataloader to save memory:
         if t % args.save_epoch == 0 and args.save:
@@ -250,37 +337,53 @@ def train(args):
         del dataloader
         
         # perform validation loop:
-        vmin, vmed, vmean, vmax = validate(model, dataloader_fn, nice_loss_fn)
+        vmin, vmed, vmean, vmax = validate(model, dataloader_fn, nice_loss_fn, args.alpha)
         print(">>> Validation Loss Statistics: min={0}, med={1}, mean={2}, max={3}".format(vmin,vmed,vmean,vmax))
-        if args.dataset == 'toy':
-            validate_outliers(model, dataloader_fn, t+1, path)
+        if args.dataset in ['blobs', 'moons', 'gausses']:
+            validate_outliers(model, dataloader_fn, t+1, path_plots, args.alpha)
+        writer.add_scalar('Validation/vmin', vmin, t+1)
+        writer.add_scalar('Validation/vmed', vmed, t+1)
+        writer.add_scalar('Validation/vmean', vmean, t+1)
+        writer.add_scalar('Validation/vmax', vmax, t+1)
+    writer.close()
 
 
-def validate_outliers(model, dataloader_fn, epoch, path):
-    fig = plt.figure()
-    ax = fig.add_subplot(111)
+def validate_outliers(model, dataloader_fn, epoch, path, alpha):
+    fig = plt.figure(figsize=(20, 10))
+    ax1 = fig.add_subplot(121)
+    ax2 = fig.add_subplot(122)
     model.eval()
-    dataloader = dataloader_fn(train=False, batch_size=args.batch_size)
+    dataloader = dataloader_fn(train=False, batch_size=args.batch_size, alpha=alpha)
 
     validation = []
     targets = []
+    inverses = []
     with torch.no_grad():
         for x, y in tqdm(dataloader):
             validation.append(model.forward(x.to(DEVICE)).cpu().detach().numpy())
+            inverses.append(model.inverse(model.forward(x.to(DEVICE))).cpu().detach().numpy())
             targets.append(y)
         validation = np.concatenate(validation, axis=0)
+        inverses = np.concatenate(inverses, axis=0)
         targets = torch.cat(targets).cpu().detach().numpy()
-        x, y = np.hsplit(validation, 2)
-        norms = np.sqrt(np.power(x, 2) + np.power(y, 2))
-        norm95 = np.percentile(norms, 95)
-        norm98 = np.percentile(norms, 98)
+        latent_x, latent_y = np.hsplit(validation, 2)
+        inverse_x, inverse_y = np.hsplit(inverses, 2)
+        norms = np.sqrt(np.power(latent_x, 2) + np.power(latent_y, 2))
+        #norm95 = np.percentile(norms, 95)
+        #norm98 = np.percentile(norms, 98)
+        treshold = np.percentile(norms, int((1-alpha)*100))
         colors = []
         for n in norms:
-            if n <= norm95:
+            if n <= treshold:
                 colors.append('black')
             else:
                 colors.append('red')
-        ax.scatter(x, y, c=colors)
+
+        ax1.title.set_text('Inverse')
+        ax2.title.set_text('Flow')
+        ax1.scatter(inverse_x, inverse_y, c=colors)
+        ax2.scatter(latent_x, latent_y, c=colors)
+
         fig.savefig('./{}/epoch_{}.png'.format(path, epoch))
 
     del dataloader
@@ -288,19 +391,19 @@ def validate_outliers(model, dataloader_fn, epoch, path):
     return
 # ===== ===== ===== ===== ===== ===== ===== ===== ===== =====
 # Validation loop: set gradient-tracking off with model in eval mode:
-def validate(model, dataloader_fn, loss_fn):
+def validate(model, dataloader_fn, loss_fn, alpha):
     """Perform validation on a dataset."""
     # set model to eval mode (turns batch norm training off)
     model.eval()
 
     # build dataloader in eval mode:
-    dataloader = dataloader_fn(train=False, batch_size=args.batch_size)
+    dataloader = dataloader_fn(train=False, batch_size=args.batch_size, alpha=alpha)
 
     # turn gradient-tracking off (for speed) during validation:
     validation_losses = []
     with torch.no_grad():
         for inputs,_ in tqdm(dataloader):
-            validation_losses.append(loss_fn(model(inputs.to(DEVICE)), model.scaling_diag, DEVICE).item())
+            validation_losses.append(loss_fn(model(inputs.to(DEVICE)), model.scaling_diag, DEVICE, args.alpha).item())
     
     # delete dataloader to save memory:
     del dataloader
@@ -319,7 +422,7 @@ if __name__ == '__main__':
     # ----- parse training settings:
     parser = argparse.ArgumentParser(description="Train a fresh NICE model and save.")
     # configuration settings:
-    parser.add_argument("--dataset", required=True, dest='dataset', choices=('tfd', 'cifar10', 'svhn', 'mnist', 'toy'),
+    parser.add_argument("--dataset", required=True, dest='dataset', choices=('tfd', 'cifar10', 'svhn', 'mnist', 'blobs', 'moons', 'gausses'),
                         help="Dataset to train the NICE model on.")
     parser.add_argument("--epochs", dest='num_epochs', default=1500, type=int,
                         help="Number of epochs to train on. [1500]")
@@ -351,6 +454,8 @@ if __name__ == '__main__':
                         help="L1 weight decay coefficient. [0.0]")
     parser.add_argument("--save", default=False, type=bool,
                         help="If save models?")
+    parser.add_argument("--alpha", default=0.05, dest='alpha', type=float,
+                        help="Percent of outliers")
     args = parser.parse_args()
     # ----- run training loop over several epochs & save models for each epoch:
     model = train(args)
