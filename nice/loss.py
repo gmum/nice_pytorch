@@ -50,8 +50,22 @@ def binomial_coeff(n, alpha):
 def binomial_nice(h, diag, DEVICE, alpha):
     radius = torch.sort(torch.stack([torch.sqrt(torch.sum(i)) for i in torch.pow(h, 2)]), descending=True)
     #radius = torch.sort(torch.stack([torch.pow(torch.sqrt(torch.sum(i)), h.shape[1]) for i in torch.pow(h, 2)]), descending=True)
-    loss = torch.sum(diag) - torch.mul(torch.tensor(2.0), torch.log(torch.dot(radius[0], binomial_coeff(radius[0].shape[0], alpha).to(DEVICE))))
+    loss = torch.sum(diag) - torch.mul(torch.tensor(h.shape[1]), torch.log(torch.dot(radius[0], binomial_coeff(radius[0].shape[0], alpha).to(DEVICE))))
     #loss = torch.div(torch.dot(radius[0], binomial_coeff(radius[0].shape[0], alpha).to(DEVICE)), torch.exp(diag[0]*diag[1]))
+    return loss
+
+
+def approximated_nice(h, diag, DEVICE, alpha):
+    radius = torch.sort(torch.stack([torch.sqrt(torch.sum(i)) for i in torch.pow(h, 2)]), descending=True)
+    n = radius[0].shape[0]
+    start = torch.floor((n*alpha) - (3*torch.sqrt((n*alpha*(1-alpha)))))
+    stop = torch.ceil((n*alpha) + (3*torch.sqrt((n*alpha*(1-alpha)))))
+    distribution = torch.distributions.normal.Normal(n*alpha, (n*alpha*(1-alpha)))
+
+    squeezed_radiuses = radius[start: stop+1]
+    dist_values = torch.stack([torch.exp(distribution.log_prob(torch.tensor(k))) for k in range(start, stop+1)])
+
+    loss = torch.mul(torch.tensor(h.shape[1]), torch.log(torch.dot(dist_values, squeezed_radiuses))) - torch.sum(diag)
     return loss
 
 
@@ -90,3 +104,15 @@ class BinomialPriorNICELoss(nn.Module):
             return torch.mean(-binomial_nice(fx, diag, DEVICE, alpha))
         else:
             return torch.sum(-binomial_nice(fx, diag, DEVICE, alpha))
+
+
+class ApproximatedPriorNICELoss(nn.Module):
+    def __init__(self, size_average=True, alpha=0.05):
+        super(ApproximatedPriorNICELoss, self).__init__()
+        self.size_average = size_average
+
+    def forward(self, fx, diag, DEVICE, alpha):
+        if self.size_average:
+            return torch.mean(approximated_nice(fx, diag, DEVICE, alpha))
+        else:
+            return torch.sum(approximated_nice(fx, diag, DEVICE, alpha))
